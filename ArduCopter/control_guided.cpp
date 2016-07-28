@@ -11,6 +11,10 @@
 #endif
 
 #define GUIDED_POSVEL_TIMEOUT_MS    3000    // guided mode's position-velocity controller times out after 3seconds with no new updates
+#define GUIDED_SPLINE_MISSION_SIZE 	50		// guided spline's cmd size	
+#define GUIDED_SPLINE_TIMEOUT_MS	10000	// guided spline's timeout period. If reached, it will reset the spline
+#define GUIDED_ATTITUDE_TIMEOUT_MS  1000    // guided mode's attitude controller times out after 1 second with no new updates
+
 
 static Vector3f posvel_pos_target_cm;
 static Vector3f posvel_vel_target_cms;
@@ -25,6 +29,25 @@ struct Guided_Limit {
     uint32_t start_time;// system time in milliseconds that control was handed to the external computer
     Vector3f start_pos; // start position as a distance from home in cm.  used for checking horiz_max limit
 } guided_limit;
+
+struct Guided_Spline_Manager {
+	uint32_t update_time_ms;  // timeout (in seconds) from the time that guided is invoked
+	uint16_t current_cmd_id; // Current Command Index
+	uint16_t cmds_length; // Length of valid cmds	
+	uint16_t reset; // Reset
+	uint16_t started;
+	uint16_t cmds_last; // Index of last added waypoint
+	AP_Mission::Mission_Command cmds[GUIDED_SPLINE_MISSION_SIZE];
+} guided_spline_manager;
+static bool guided_spline_manager_initialized = false;
+
+struct {
+    uint32_t update_time_ms;
+    float roll_cd;
+    float pitch_cd;
+    float yaw_cd;
+    float climb_rate_cms;
+} static guided_angle_state = {0,0.0f, 0.0f, 0.0f, 0.0f};
 
 // guided_init - initialise guided controller
 bool Copter::guided_init(bool ignore_checks)
@@ -128,6 +151,39 @@ void Copter::guided_posvel_control_start()
     set_auto_yaw_mode(AUTO_YAW_HOLD);
 }
 
+// Guided spline code
+// Verge Aero
+
+// initialize guide mode's spline start
+void Copter::guided_spline_start(const Vector3f& destination, bool stopped_at_start, 
+                               AC_WPNav::spline_segment_end_type seg_end_type, 
+                               const Vector3f& next_destination)
+{
+    guided_mode = Guided_WP_Spline;
+	
+	// initialise waypoint and spline controller
+    wp_nav.wp_and_spline_init();
+	
+	// Check if timeout has been reached
+	if (millis() - guided_spline_manager.update_time_ms > GUIDED_SPLINE_TIMEOUT_MS) {
+		reset_guided_spline_manager();
+	}
+	
+	// Set Manager 
+	guided_spline_manager.update_time_ms = millis();
+	
+    // initialise wpnav
+    wp_nav.set_spline_destination(destination, stopped_at_start, seg_end_type, next_destination);
+	
+    // initialise yaw
+    // To-Do: reset the yaw only when the previous navigation command is not a WP.  this would allow removing the special check for ROI
+    if (auto_yaw_mode != AUTO_YAW_ROI) {
+        set_auto_yaw_mode(get_default_auto_yaw_mode(false));
+    }
+}
+
+// End Guided spline code
+
 // guided_set_destination - sets guided mode's target destination
 void Copter::guided_set_destination(const Vector3f& destination)
 {
@@ -137,6 +193,18 @@ void Copter::guided_set_destination(const Vector3f& destination)
     }
 
     wp_nav.set_wp_destination(destination);
+}
+
+// Verge Aero
+// guided_set_destination - sets guided mode's target destination
+void Copter::guided_set_destination(const Vector3f& destination, bool fast)
+{
+    // ensure we are in position control mode
+    if (guided_mode != Guided_WP) {
+        guided_pos_control_start();
+    }
+
+    wp_nav.set_wp_destination(destination, fast);
 }
 
 // guided_set_velocity - sets guided mode's target velocity
@@ -193,6 +261,11 @@ void Copter::guided_run()
         // run position-velocity controller
         guided_posvel_control_run();
         break;
+		
+	case Guided_WP_Spline:
+		// run spline controller
+		guided_spline_run();
+		break;
     }
  }
 
@@ -318,6 +391,9 @@ void Copter::guided_vel_control_run()
     }
 }
 
+// Guided spline code
+// Verge Aero
+
 // guided_posvel_control_run - runs the guided spline controller
 // called from guided_run
 void Copter::guided_posvel_control_run()
@@ -386,6 +462,296 @@ void Copter::guided_posvel_control_run()
         attitude_control.angle_ef_roll_pitch_yaw(pos_control.get_roll(), pos_control.get_pitch(), get_auto_heading(), true);
     }
 }
+
+// Guided spline code
+// Verge Aero
+
+void Copter::guided_spline_run()
+{
+    // process pilot's yaw input
+    float target_yaw_rate = 0;
+	
+    if (!failsafe.radio) {
+        // get pilot's desired yaw rat
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->control_in);
+        if (!is_zero(target_yaw_rate)) {
+            set_auto_yaw_mode(AUTO_YAW_HOLD);
+        }
+    }
+	
+	// Check if timeout has been reached
+	if ((millis() - guided_spline_manager.update_time_ms > GUIDED_SPLINE_TIMEOUT_MS) && guided_spline_manager.reset==0) {
+		reset_guided_spline_manager();
+	}
+	
+	// Check if the cmd ID should loop
+	if( guided_spline_manager.reset==0 && guided_spline_manager.started == 1
+	        && guided_spline_manager.current_cmd_id==GUIDED_SPLINE_MISSION_SIZE
+	        && guided_spline_manager.current_cmd_id!=guided_spline_manager.cmds_last){
+		guided_spline_manager.current_cmd_id = 0;
+	}
+	
+	// Updated Guided Spline
+	if (wp_nav.reached_spline_destination()){
+		// If reset is not equal to 0 the mission has started
+		if (guided_spline_manager.reset==0 && guided_spline_manager.started == 1
+		        && guided_spline_manager.current_cmd_id==guided_spline_manager.cmds_last) {
+
+		    // Set Current Waypoint
+            if(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id-1].content.location.flags.relative_xy){
+                guided_set_destination(Vector3f(1.0e-1f*guided_spline_manager.cmds[guided_spline_manager.current_cmd_id-1].content.location.x,
+                        1.0e-1f*guided_spline_manager.cmds[guided_spline_manager.current_cmd_id-1].content.location.y,
+                        pv_alt_above_origin(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id-1].content.location.alt)));
+            } else {
+                // set wp_nav's destination
+                Vector3f pos_or_vel = pv_location_to_vector(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id-1].content.location);
+
+                // Set Destination
+                guided_set_destination(pos_or_vel);
+            }
+
+			// Reset the manager
+			reset_guided_spline_manager();	
+			
+			gcs_send_text_P(SEVERITY_MEDIUM,PSTR("Spline Finished"));
+		}		
+		// If current_cmd_id < cmds_length then we have valid GPS positions to execute
+		else if (guided_spline_manager.reset==0 && guided_spline_manager.started == 1){
+			// Start the stored guided request
+			do_guided(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id++]);
+		} 
+	}
+
+    // run waypoint controller
+    wp_nav.update_spline();
+
+    // call z-axis position controller (wpnav should have already updated it's alt target)
+    pos_control.update_z_controller();
+
+    // call attitude controller
+    if (auto_yaw_mode == AUTO_YAW_HOLD) {
+        // roll & pitch from waypoint controller, yaw rate from pilot
+        attitude_control.angle_ef_roll_pitch_rate_ef_yaw(wp_nav.get_roll(), wp_nav.get_pitch(), target_yaw_rate);
+    }else{
+        // roll, pitch from waypoint controller, yaw heading from auto_heading()
+        attitude_control.angle_ef_roll_pitch_yaw(wp_nav.get_roll(), wp_nav.get_pitch(), get_auto_heading(), true);
+    }
+}
+
+// Start the mission list
+// Verge Aero
+
+bool Copter::start_guided_spline_mission(){
+	// Make sure the mission has been reset
+	if(!guided_spline_manager_initialized){
+		reset_guided_spline_manager();		
+		guided_spline_manager_initialized = true;
+		return false;
+	}	
+	
+	// Make sure there are enough waypoints to start
+	if(guided_spline_manager.cmds_length<1){
+		return false;
+	}
+	
+	// Make sure there are enough waypoints to start
+	if(guided_spline_manager.cmds_length==2 && guided_spline_manager.current_cmd_id<guided_spline_manager.cmds_length){
+		// Make sure we send both the current and next waypoint
+		do_guided(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id++]);
+		return true;
+	}
+	
+	// Make sure that we haven't started already
+	if(guided_spline_manager.started==1){		
+		return true;
+	}	
+	
+	// Initialize the wp and spline in wp nav
+	wp_nav.wp_and_spline_init();
+	
+	// Set Update Time 
+	guided_spline_manager.update_time_ms = millis();
+	
+	// Spline manager knows that the system is no longer reset
+	guided_spline_manager.reset = 0;
+	guided_spline_manager.started = 1;
+	
+	// Make sure we send both the current and next waypoint
+	do_guided(guided_spline_manager.cmds[guided_spline_manager.current_cmd_id++]);
+	return true;
+}
+
+// Add to mission list
+// Verge Aero
+
+void Copter::add_guided_spline_cmd(AP_Mission::Mission_Command cmd){
+	
+	// EXPERIMENTAL: Make sure we are not adding duplicate waypoints
+	if (cmd.content.location.lat == guided_spline_manager.cmds[guided_spline_manager.cmds_last].content.location.lat && cmd.content.location.lng == guided_spline_manager.cmds[guided_spline_manager.cmds_last].content.location.lng){
+		// Duplicate Waypoint	
+		return;
+	}
+	
+	// Check the size
+	if (guided_spline_manager.cmds_last>=GUIDED_SPLINE_MISSION_SIZE && guided_spline_manager.cmds_length>=GUIDED_SPLINE_MISSION_SIZE){
+		// Mission List is filled
+		// Point to beginning
+		guided_spline_manager.cmds_last = 0;
+	} else if (guided_spline_manager.cmds_length<GUIDED_SPLINE_MISSION_SIZE){
+		// Increment the Length
+		guided_spline_manager.cmds_length++;
+	}
+	
+	// Set Update Time 
+	guided_spline_manager.update_time_ms = millis();
+	
+	// Reset the p1 value and reset
+	cmd.p1 = MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS;
+	
+	// Add the mission to the mission list
+	guided_spline_manager.cmds[guided_spline_manager.cmds_last++] = cmd;	
+}
+
+// Modify the mission list at a mission position
+// Verge Aero
+
+void Copter::modify_guided_spline_cmd(uint16_t mission_position, AP_Mission::Mission_Command cmd){
+	// Check to make sure that the mission position is valid
+	if (mission_position >= guided_spline_manager.cmds_length){
+		return;
+	}
+	
+	// Change the parameter value to an arbitrarily large number to tell the do_guided command
+	// to GOTO spline_waypoint
+	cmd.p1 = MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS;
+	
+	// Overwrite the CMD at the position specified
+	guided_spline_manager.cmds[mission_position] = cmd;
+}
+
+// Delete a mission item at a mission position
+// Verge Aero
+
+void Copter::delete_guided_spline_cmd(uint16_t mission_position){
+	// Variables
+	uint16_t i = 0;
+	AP_Mission::Mission_Command cmd;
+	
+	// Check to make sure that the mission position is valid
+	if (mission_position >= guided_spline_manager.cmds_length){
+		return;
+	}
+	
+	// Mission position is valid
+	
+	// Shift all stored commands
+	for (i = mission_position; i<guided_spline_manager.cmds_length-1; i++){
+		guided_spline_manager.cmds[i] = guided_spline_manager.cmds[i+1];
+	}
+	
+	// Clear the end of the cmds list
+	for (i=guided_spline_manager.cmds_length-1; i<GUIDED_SPLINE_MISSION_SIZE;i++){
+		guided_spline_manager.cmds[i] = cmd;
+	}
+	
+	// Decrement the length
+	guided_spline_manager.cmds_length--;
+	
+	//gcs_send_text_P(SEVERITY_MEDIUM,PSTR("Waypoint Deleted\n"));
+}
+
+// Insert a mission item at a mission position
+// Verge Aero
+
+void Copter::insert_guided_spline_cmd(uint16_t mission_position, AP_Mission::Mission_Command cmd){
+	// Variables
+	uint16_t i = 0;
+	
+	// Check to make sure that the mission position is valid
+	if (mission_position >= guided_spline_manager.cmds_length){
+		//gcs_send_text_P(SEVERITY_MEDIUM,PSTR("Mission position out of bounds\n"));
+		return;
+	}	
+	
+	// Check if we have room to add a mission position
+	if (guided_spline_manager.cmds_length+1>GUIDED_SPLINE_MISSION_SIZE){
+		// Mission List is filled
+		return;
+	}	
+	
+	// Shift all stored commands
+	for (i = mission_position; i<=guided_spline_manager.cmds_length; i++){
+		guided_spline_manager.cmds[i+1] = guided_spline_manager.cmds[i];
+	}
+	
+	// Change the parameter value to an arbitrarily large number to tell the do_guided command
+	// to GOTO spline_waypoint
+	cmd.p1 = MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS;
+	
+	// Overwrite the CMD at the position specified
+	guided_spline_manager.cmds[mission_position] = cmd;
+	
+	// Increment the length
+	guided_spline_manager.cmds_length++;
+}
+
+// Reset the mission List
+// Verge Aero
+
+bool Copter::reset_guided_spline_manager(){
+	int i = 0;
+	AP_Mission::Mission_Command cmd;
+	
+	// Return if it has already been reset
+	if (guided_spline_manager.reset==1){
+		return false;
+	}
+		
+	//print_spline_manager();
+	
+	// Reset Variables
+	guided_spline_manager.update_time_ms 	= millis();
+	guided_spline_manager.current_cmd_id 	= 0;
+	guided_spline_manager.cmds_length 		= 0;
+	guided_spline_manager.reset 			= 1;
+	guided_spline_manager.cmds_last 		= 0;
+	guided_spline_manager.started 			= 0;
+	
+	// Clear the cmds list
+	for (i=0; i<GUIDED_SPLINE_MISSION_SIZE;i++){
+		guided_spline_manager.cmds[i] = cmd;
+	}
+	
+	return true;
+}
+
+// Returns the number of waypoint remaining to be executed
+// Verge Aero
+
+int Copter::get_number_waypoints_remaining(){
+	int difference = 0;
+	
+	// Calculate the difference
+	difference = guided_spline_manager.cmds_last - guided_spline_manager.current_cmd_id;
+	
+	// If the circular buffer has looped, make sure we grab a correct value
+	if (difference<0){
+		difference = guided_spline_manager.cmds_last + (GUIDED_SPLINE_MISSION_SIZE - guided_spline_manager.current_cmd_id);
+	}
+	
+	return difference;
+}
+
+void Copter::print_spline_manager(){	
+	gcs_send_text_fmt(PSTR("Update Time 	: %i\n"),guided_spline_manager.update_time_ms);
+	gcs_send_text_fmt(PSTR("Current CMD ID 	: %i\n"),guided_spline_manager.current_cmd_id);
+	gcs_send_text_fmt(PSTR("CMD Length 		: %i\n"),guided_spline_manager.cmds_length);
+	gcs_send_text_fmt(PSTR("Rest Bool 		: %i\n"),guided_spline_manager.reset);
+	gcs_send_text_fmt(PSTR("Started Bool 	: %i\n"),guided_spline_manager.started);
+	gcs_send_text_fmt(PSTR("CMD Last 		: %i\n"),guided_spline_manager.cmds_last);
+}
+
+// End Guided Spline Code
 
 // Guided Limit code
 

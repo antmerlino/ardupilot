@@ -88,7 +88,8 @@ public:
         GPS_TYPE_SIRF  = 6,
         GPS_TYPE_HIL   = 7,
         GPS_TYPE_SBP   = 8,
-        GPS_TYPE_PX4   = 9
+        GPS_TYPE_PX4   = 9,
+        GPS_TYPE_OFFBOARD = 10
     };
 
     /// GPS status codes
@@ -317,6 +318,11 @@ public:
 
     // set position for HIL
     void setHIL(uint8_t instance, GPS_Status status, uint64_t time_epoch_ms, 
+                const Location &location, const Vector3f &velocity, uint8_t num_sats,
+                uint16_t hdop, bool _have_vertical_velocity);
+
+    // set position for Offboard
+    void setOffboard(uint8_t instance, GPS_Status status, uint64_t time_epoch_ms,
                 const Location &location, const Vector3f &velocity, uint8_t num_sats,
                 uint16_t hdop, bool _have_vertical_velocity);
 

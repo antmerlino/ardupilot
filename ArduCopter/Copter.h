@@ -584,7 +584,10 @@ private:
     void send_attitude(mavlink_channel_t chan);
     void send_limits_status(mavlink_channel_t chan);
     void send_extended_status1(mavlink_channel_t chan);
-    void send_location(mavlink_channel_t chan);
+    void send_location(mavlink_channel_t chan);	
+	void send_local_position(mavlink_channel_t chan);
+	void send_local_inertial_nav(mavlink_channel_t chan); // Verge Aero
+	void send_waypoint_nav(mavlink_channel_t chan); // Verge Aero
     void send_nav_controller_output(mavlink_channel_t chan);
     void send_simstate(mavlink_channel_t chan);
     void send_hwstatus(mavlink_channel_t chan);
@@ -594,6 +597,8 @@ private:
     void send_current_waypoint(mavlink_channel_t chan);
     void send_rangefinder(mavlink_channel_t chan);
     void send_rpm(mavlink_channel_t chan);
+	void send_waypoint_request();
+	void send_mission_item_reached_request();
     void rpm_update();
     void send_pid_tuning(mavlink_channel_t chan);
     void send_statustext(mavlink_channel_t chan);
@@ -728,14 +733,28 @@ private:
     void guided_pos_control_start();
     void guided_vel_control_start();
     void guided_posvel_control_start();
+	void guided_angle_control_start();
+	void guided_spline_start(const Vector3f& destination, bool stopped_at_start, AC_WPNav::spline_segment_end_type seg_end_type, const Vector3f& next_destination);
     void guided_set_destination(const Vector3f& destination);
+	void guided_set_destination(const Vector3f& destination, bool fast);
     void guided_set_velocity(const Vector3f& velocity);
     void guided_set_destination_posvel(const Vector3f& destination, const Vector3f& velocity);
+    void guided_set_angle(const Quaternion &q, float climb_rate_cms);
     void guided_run();
     void guided_takeoff_run();
     void guided_pos_control_run();
     void guided_vel_control_run();
     void guided_posvel_control_run();
+	void guided_spline_run(); // Verge Aero
+	void guided_angle_control_run();
+	bool start_guided_spline_mission(); // Verge Aero
+	void add_guided_spline_cmd(AP_Mission::Mission_Command cmd); // Verge Aero
+	void modify_guided_spline_cmd(uint16_t mission_position, AP_Mission::Mission_Command cmd); // Verge Aero
+	void delete_guided_spline_cmd(uint16_t mission_position); // Verge Aero
+	void insert_guided_spline_cmd(uint16_t mission_position, AP_Mission::Mission_Command cmd); // Verge Aero
+	bool reset_guided_spline_manager(); // Verge Aero
+	void print_spline_manager(); // Verge Aero
+	int get_number_waypoints_remaining(); // Verge Aero
     void guided_limit_clear();
     void guided_limit_set(uint32_t timeout_ms, float alt_min_cm, float alt_max_cm, float horiz_max_cm);
     void guided_limit_init_time_and_pos();

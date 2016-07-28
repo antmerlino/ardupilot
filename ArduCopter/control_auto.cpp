@@ -623,7 +623,12 @@ void Copter::set_auto_yaw_roi(const Location &roi_location)
 #if MOUNT == ENABLED
         // check if mount type requires us to rotate the quad
         if(!camera_mount.has_pan_control()) {
-            roi_WP = pv_location_to_vector(roi_location);
+            if(roi_location.flags.relative_xy){
+                roi_WP = Vector3f(1.0e-1f*roi_location.x, 1.0e-1f*roi_location.y, pv_alt_above_origin(roi_location.alt));
+            }
+            else {
+                roi_WP = pv_location_to_vector(roi_location);
+            }
             set_auto_yaw_mode(AUTO_YAW_ROI);
         }
         // send the command to the camera mount
@@ -637,7 +642,12 @@ void Copter::set_auto_yaw_roi(const Location &roi_location)
         //      4: point at a target given a target id (can't be implemented)
 #else
         // if we have no camera mount aim the quad at the location
-        roi_WP = pv_location_to_vector(roi_location);
+        if(roi_location.flags.relative_xy){
+            roi_WP = Vector3f(1.0e-1f*roi_location.x, 1.0e-1f*roi_location.y, pv_alt_above_origin(roi_location.alt));
+        }
+        else {
+            roi_WP = pv_location_to_vector(roi_location);
+        }
         set_auto_yaw_mode(AUTO_YAW_ROI);
 #endif  // MOUNT == ENABLED
     }

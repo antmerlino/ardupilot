@@ -184,7 +184,8 @@ enum GuidedMode {
     Guided_TakeOff,
     Guided_WP,
     Guided_Velocity,
-    Guided_PosVel
+    Guided_PosVel,
+	Guided_WP_Spline
 };
 
 // RTL states
@@ -328,6 +329,8 @@ enum FlipState {
 #define DATA_ROTOR_RUNUP_COMPLETE           58  // Heli only
 #define DATA_ROTOR_SPEED_BELOW_CRITICAL     59  // Heli only
 #define DATA_EKF_ALT_RESET                  60
+#define DATA_SPLINE_RECEIVED                77
+#define DATA_EXTERNAL_GPS_RECEIVED          78
 
 // Centi-degrees to radians
 #define DEGX100 5729.57795f
@@ -418,5 +421,8 @@ enum FlipState {
 
 // for PILOT_THR_BHV parameter
 #define THR_BEHAVE_FEEDBACK_FROM_MID_STICK (1<<0)
+
+// VERGE AERO DEFINES
+#define MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS 12345
 
 #endif // _DEFINES_H

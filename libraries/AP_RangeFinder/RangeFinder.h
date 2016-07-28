@@ -48,7 +48,8 @@ public:
         RangeFinder_TYPE_PX4_PWM= 5,
         RangeFinder_TYPE_BBB_PRU= 6,
         RangeFinder_TYPE_LWI2C  = 7,
-        RangeFinder_TYPE_LWSER  = 8
+        RangeFinder_TYPE_LWSER  = 8,
+        RangeFinder_TYPE_OFFBOARD = 9,
     };
 
     enum RangeFinder_Function {
@@ -148,6 +149,8 @@ public:
     RangeFinder_Status status(void) const {
         return status(primary_instance);
     }
+
+    void set_offboard_range_finder(uint8_t instance, uint16_t dist_cm);
 
     // true if sensor is returning data
     bool has_data(uint8_t instance) const;

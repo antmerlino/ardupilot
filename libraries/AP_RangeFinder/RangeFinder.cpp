@@ -23,13 +23,14 @@
 #include "AP_RangeFinder_BBB_PRU.h"
 #include "AP_RangeFinder_LightWareI2C.h"
 #include "AP_RangeFinder_LightWareSerial.h"
+#include "AP_RangeFinder_offboard.h"
 
 // table of user settable parameters
 const AP_Param::GroupInfo RangeFinder::var_info[] = {
     // @Param: _TYPE
     // @DisplayName: Rangefinder type
     // @Description: What type of rangefinder device that is connected
-    // @Values: 0:None,1:Analog,2:APM2-MaxbotixI2C,3:APM2-PulsedLightI2C,4:PX4-I2C,5:PX4-PWM,6:BBB-PRU,7:LightWareI2C,8:LightWareSerial
+    // @Values: 0:None,1:Analog,2:APM2-MaxbotixI2C,3:APM2-PulsedLightI2C,4:PX4-I2C,5:PX4-PWM,6:BBB-PRU,7:LightWareI2C,8:LightWareSerial,9:Offboard
     // @User: Standard
     AP_GROUPINFO("_TYPE",    0, RangeFinder, _type[0], 0),
 
@@ -538,6 +539,22 @@ void RangeFinder::detect_instance(uint8_t instance)
             drivers[instance] = new AP_RangeFinder_analog(*this, instance, state[instance]);
             return;
         }
+    }
+    if (type == RangeFinder_TYPE_OFFBOARD) {
+        if(AP_RangeFinder_offboard::detect(*this, instance)) {
+            state[instance].instance = instance;
+            drivers[instance] = new AP_RangeFinder_offboard(*this, instance, state[instance]);
+            return;
+        }
+    }
+}
+
+void RangeFinder::set_offboard_range_finder(uint8_t instance, uint16_t dist_cm) {
+    if(instance >= RANGEFINDER_MAX_INSTANCES) return;
+
+    // Check to make sure the type is offboard
+    if(_type[instance] == RangeFinder_TYPE_OFFBOARD) {
+        state[instance].distance_cm = dist_cm;
     }
 }
 

@@ -1203,10 +1203,13 @@
                     <description>Point toward given MISSION.</description>
                </entry>
                <entry value="3" name="MAV_ROI_LOCATION">
-                    <description>Point toward fixed location.</description>
+                    <description>Point toward fixed gps location.</description>
                </entry>
                <entry value="4" name="MAV_ROI_TARGET">
                     <description>Point toward of given id.</description>
+               </entry>
+               <entry value="5" name="MAV_ROI_LOCATION_LOCAL_ENU">
+                    <description>Point toward fixed local location in ENU.</description>
                </entry>
           </enum>
           <enum name="MAV_CMD_ACK">

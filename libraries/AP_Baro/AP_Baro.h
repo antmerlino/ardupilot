@@ -7,12 +7,13 @@
 #include <AP_Param/AP_Param.h>
 #include <Filter/Filter.h>
 #include <Filter/DerivativeFilter.h>
+#include <GCS_MAVLink/GCS_MAVLink.h>
 
 // maximum number of sensor instances
 #if HAL_CPU_CLASS == HAL_CPU_CLASS_16
 #define BARO_MAX_INSTANCES 1
 #else
-#define BARO_MAX_INSTANCES 2
+#define BARO_MAX_INSTANCES 3
 #endif
 
 // maximum number of drivers. Note that a single driver can provide
@@ -117,6 +118,9 @@ public:
     // HIL (and SITL) interface, setting pressure and temperature
     void setHIL(uint8_t instance, float pressure, float temperature);
 
+    // Handle an incoming XXXXXXX message (from a MAVLink enabled barometer)
+    void handle_msg(mavlink_message_t *msg);
+
     // register a new sensor, claiming a sensor slot. If we are out of
     // slots it will panic
     uint8_t register_sensor(void);
@@ -151,6 +155,9 @@ private:
     } sensors[BARO_MAX_INSTANCES];
 
     AP_Int8                             _alt_offset;
+    AP_Int8                             _primary_baro; // primary chosen by user
+    AP_Int8                             _mavlink_baro; // mavlink barometer enabled/disabled
+    int8_t                             _mavlink_baro_sensor; // Sensor number to Mavlink Barometer
     float                               _last_altitude_EAS2TAS;
     float                               _EAS2TAS;
     float                               _external_temperature;
@@ -166,5 +173,6 @@ private:
 #include "AP_Baro_BMP085.h"
 #include "AP_Baro_HIL.h"
 #include "AP_Baro_PX4.h"
+#include "AP_Baro_MAVLink.h"
 
 #endif // __AP_BARO_H__

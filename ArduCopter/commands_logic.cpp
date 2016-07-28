@@ -610,7 +610,6 @@ bool Copter::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
 
     // check if timer has run out
     if (((millis() - loiter_time) / 1000) >= loiter_time_max) {
-        gcs_send_text_fmt(PSTR("Reached Command #%i"),cmd.index);
         return true;
     }else{
         return false;
@@ -692,7 +691,6 @@ bool Copter::verify_spline_wp(const AP_Mission::Mission_Command& cmd)
 
     // check if timer has run out
     if (((millis() - loiter_time) / 1000) >= loiter_time_max) {
-        gcs_send_text_fmt(PSTR("Reached Command #%i"),cmd.index);
         return true;
     }else{
         return false;
@@ -795,22 +793,37 @@ bool Copter::verify_yaw()
 /********************************************************************************/
 
 // do_guided - start guided mode
+// Verge Aero
 bool Copter::do_guided(const AP_Mission::Mission_Command& cmd)
 {
     Vector3f pos_or_vel;    // target location or velocity
+	static Location current_wp, next_wp;
 
     // only process guided waypoint if we are in guided mode
     if (control_mode != GUIDED && !(control_mode == AUTO && auto_mode == Auto_NavGuided)) {
         return false;
     }
-
+	
     // switch to handle different commands
-    switch (cmd.id) {
-
+    switch (cmd.id) {		
         case MAV_CMD_NAV_WAYPOINT:
             // set wp_nav's destination
-            pos_or_vel = pv_location_to_vector(cmd.content.location);
-            guided_set_destination(pos_or_vel);
+            if(cmd.content.location.flags.relative_xy){
+                pos_or_vel = Vector3f(1.0e-1f*cmd.content.location.x, 1.0e-1f*cmd.content.location.y, pv_alt_above_origin(cmd.content.location.alt));
+            }else {
+                pos_or_vel = pv_location_to_vector(cmd.content.location);
+            }
+			
+			// Make sure the spline Waypoints are reset
+			reset_guided_spline_manager();
+			
+			// Tell it to do a fast waypoint or normal waypoint
+			// Verge Aero
+			if (cmd.p1==1){
+				guided_set_destination(pos_or_vel, true);
+			} else {
+				guided_set_destination(pos_or_vel, false);
+			}			
             return true;
             break;
 
@@ -818,11 +831,149 @@ bool Copter::do_guided(const AP_Mission::Mission_Command& cmd)
             do_yaw(cmd);
             return true;
             break;
+		
+		// TODO:
+		// We need to make sure these dummy commands don't screw anything up 
+		// in other modes besides guided incase they are accidently called 
+		// by the program
+					
+		// Using MAV_CMD_NAV_LAND for reseting spline mission
+		case MAV_CMD_NAV_LAND:
+			// Modify the specified waypoint
+			reset_guided_spline_manager();	
+			
+			// Reset Waypoints
+			current_wp.lat = 0;
+			current_wp.lng = 0;
+			next_wp.lat = 0;
+			next_wp.lng = 0;
 
-        default:
-            // reject unrecognised command
-            return false;
-            break;
+			break;
+		
+		// Using MAV_CMD_NAV_LOITER_TURNS for add spline command
+		case MAV_CMD_NAV_LOITER_TURNS:
+			// Check if the we are armed
+			if(!motors.armed()){
+				// Reset the spline manager for good measure
+				if(reset_guided_spline_manager()){
+					// Reset Waypoints
+					current_wp.lat = 0;
+					current_wp.lng = 0;
+					next_wp.lat = 0;
+					next_wp.lng = 0;
+				}
+				break;				
+			}
+		
+			// Try and Start the mission
+			if (cmd.p1!=MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS){
+				// Try to start the mission
+				if(!start_guided_spline_mission()){
+					// Reset Waypoints
+					current_wp.lat = 0;
+					current_wp.lng = 0;
+					next_wp.lat = 0;
+					next_wp.lng = 0;
+				}	
+
+				// Log where the spline data is received
+				Log_Write_Event(DATA_SPLINE_RECEIVED);
+
+				// Add command to
+				add_guided_spline_cmd(cmd);	
+				
+				// Try to start again
+				start_guided_spline_mission();
+							
+			} else if(cmd.p1==MODIFY_GUIDED_SPLINE_WAYPOINT_WAYPOINT_PASS) {
+				goto spline_waypoint;
+			}		
+			
+			break;
+		
+		// Using MAV_CMD_NAV_SPLINE_WAYPOINT to reset and write a mission list to the Spline
+		// Mission manage. Also runs the start guided spline contoller code.
+		case MAV_CMD_NAV_SPLINE_WAYPOINT:
+		{			
+			// Set the guided mode and initialize the spline waypoint
+		spline_waypoint:			
+								
+			// Set the appropriate static waypoint
+			// If this is the first time receiving a spline waypoint, then send it to the first location
+			if(current_wp.lat==0.0f && current_wp.lng==0.0f){						
+				// Make sure the cmd is valid
+				if (cmd.content.location.lat!=0.0f || cmd.content.location.lng!=0.0f){
+					// Set Current Waypoint
+					current_wp = cmd.content.location;
+					
+					if(cmd.content.location.flags.relative_xy){
+					    guided_set_destination(Vector3f(1.0e-1f*cmd.content.location.x, 1.0e-1f*cmd.content.location.y, pv_alt_above_origin(cmd.content.location.alt)));
+					} else {
+                        // set wp_nav's destination
+                        pos_or_vel = pv_location_to_vector(current_wp);
+
+                        // Set Destination
+                        guided_set_destination(pos_or_vel);
+					}
+				}									
+			} else {
+				// Check if we have reached our destination
+				// This should have been accomplished during the control guided spline routine.
+				//if(wp_nav.reached_spline_destination() || guided_mode != Guided_WP_Spline){
+					
+				// Make sure the cmd is valid
+				if (cmd.content.location.lat!=0.0f || cmd.content.location.lng!=0.0f){
+					// Set Next Waypoint
+					next_wp = cmd.content.location;
+					//gcs_send_text_P(SEVERITY_MEDIUM,PSTR("Sending 2nd wp\n"));
+				}
+			}
+			
+			// Sanity check: Return if waypoints are not valid. (we don't want it to fly to Africa)
+			if(next_wp.lat==0||next_wp.lng==0||current_wp.lat==0||current_wp.lng==0) return false;
+			
+			Vector3f local_pos;
+			Vector3f next_destination;
+			Vector3f curr_pos = inertial_nav.get_position();
+
+			if(cmd.content.location.flags.relative_xy){
+			    local_pos = Vector3f(1.0e-1f*current_wp.x, 1.0e-1f*current_wp.y, pv_alt_above_origin(current_wp.alt));
+			    next_destination = Vector3f(1.0e-1f*next_wp.x, 1.0e-1f*next_wp.y, pv_alt_above_origin(next_wp.alt));
+			} else {
+                // Get Current Position
+                //const Vector3f& curr_pos = inertial_nav.get_position();
+
+                // Get the orgin and destination
+                local_pos = pv_location_to_vector_with_default(current_wp, curr_pos);
+                next_destination = pv_location_to_vector_with_default(next_wp, local_pos);
+			}
+
+			// Check if the Current and Next waypoints are valid
+			if(local_pos.x!=0&&local_pos.y!=0&&next_destination.x!=0&&next_destination.y!=0) {
+				// local_pos is the current waypoint, next_destination is the next waypoint
+				// The second parameter tells the guided spline that it has not started from a stopped position.
+				// The third parameter tells it that it continues to another spline 
+				guided_spline_start(local_pos, false, AC_WPNav::SEGMENT_END_SPLINE, next_destination);
+				//gcs_send_text_P(SEVERITY_MEDIUM,PSTR("Running Spline\n"));
+				
+				// Change current_wp to next_wp and reset next_wp
+				current_wp = next_wp;
+				next_wp.lat = 0;
+				next_wp.lng = 0;
+				
+			} else {
+				// Command Was Rejected
+				return false;
+			}
+			
+			// If the current waypoints have been cleared, but we still have next waypoints			
+			return true;
+			break;		
+		}
+			
+		default:
+			return false;
+			break;			
     }
 
     return true;
@@ -896,4 +1047,14 @@ void Copter::do_mount_control(const AP_Mission::Mission_Command& cmd)
 #if MOUNT == ENABLED
     camera_mount.set_angle_targets(cmd.content.mount_control.roll, cmd.content.mount_control.pitch, cmd.content.mount_control.yaw);
 #endif
+}
+
+// Hit next Waypoint
+void Copter::send_waypoint_request(){
+	gcs_send_message(MSG_NEXT_WAYPOINT);
+}
+
+// Mission Item 
+void Copter::send_mission_item_reached_request(){
+	gcs_send_message(MSG_MISSION_ITEM_REACHED);
 }

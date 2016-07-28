@@ -737,6 +737,16 @@ bool AP_Mission::mavlink_to_mission_cmd(const mavlink_mission_item_t& packet, AP
             cmd.content.location.flags.relative_alt = 1;
             break;
 
+        case MAV_FRAME_LOCAL_ENU:
+            if (copy_location) {
+                cmd.content.location.x = packet.y*1.0e3f;
+                cmd.content.location.y = packet.x*1.0e3f;
+            }
+            cmd.content.location.alt = packet.z*1.0e2f;
+            cmd.content.location.flags.relative_alt = 1;
+            cmd.content.location.flags.relative_xy = 1;
+            break;
+
 #ifdef MAV_FRAME_LOCAL_NED
         case MAV_FRAME_LOCAL_NED:                         // local (relative to home position)
             if (copy_location) {

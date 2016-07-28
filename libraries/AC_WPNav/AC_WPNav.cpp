@@ -455,6 +455,73 @@ void AC_WPNav::set_wp_origin_and_destination(const Vector3f& origin, const Vecto
     _limited_speed_xy_cms = constrain_float(speed_along_track,0,_wp_speed_cms);
 }
 
+// Verge Aero
+/// set_destination - set destination using cm from home
+void AC_WPNav::set_wp_destination(const Vector3f& destination, bool fast)
+{
+	Vector3f origin;
+
+    // if waypoint controller is active use the existing position target as the origin
+    if ((hal.scheduler->millis() - _wp_last_update) < 1000) {
+        origin = _pos_control.get_pos_target();
+    } else {
+        // if waypoint controller is not active, set origin to reasonable stopping point (using curr pos and velocity)
+        _pos_control.get_stopping_point_xy(origin);
+        _pos_control.get_stopping_point_z(origin);
+    }
+
+    // set origin and destination
+    set_wp_origin_and_destination(origin, destination, fast);
+}
+
+// Verge Aero
+/// set_origin_and_destination - set origin and destination waypoints using position vectors (distance from home in cm)
+void AC_WPNav::set_wp_origin_and_destination(const Vector3f& origin, const Vector3f& destination, bool fast)
+{
+    // store origin and destination locations
+    _origin = origin;
+    _destination = destination;
+    Vector3f pos_delta = _destination - _origin;
+
+    _track_length = pos_delta.length(); // get track length
+
+    // calculate each axis' percentage of the total distance to the destination
+    if (is_zero(_track_length)) {
+        // avoid possible divide by zero
+        _pos_delta_unit.x = 0;
+        _pos_delta_unit.y = 0;
+        _pos_delta_unit.z = 0;
+    }else{
+        _pos_delta_unit = pos_delta/_track_length;
+    }
+
+    // calculate leash lengths
+    calculate_wp_leash_length();
+
+    // initialise yaw heading
+    if (_track_length >= WPNAV_YAW_DIST_MIN) {
+        _yaw = get_bearing_cd(_origin, _destination);
+    } else {
+        // set target yaw to current heading.  Alternatively we could pull this from the attitude controller if we had access to it
+        _yaw = _attitude_control.angle_ef_targets().z;
+    }
+
+    // initialise intermediate point to the origin
+    _pos_control.set_pos_target(origin);
+    _track_desired = 0;             // target is at beginning of track
+    _flags.reached_destination = false;
+    _flags.fast_waypoint = fast;   // default waypoint back to slow
+    _flags.slowing_down = false;    // target is not slowing down yet
+    _flags.segment_type = SEGMENT_STRAIGHT;
+    _flags.new_wp_destination = true;   // flag new waypoint so we can freeze the pos controller's feed forward and smooth the transition
+
+    // initialise the limited speed to current speed along the track
+    const Vector3f &curr_vel = _inav.get_velocity();
+    // get speed along track (note: we convert vertical speed into horizontal speed equivalent)
+    float speed_along_track = curr_vel.x * _pos_delta_unit.x + curr_vel.y * _pos_delta_unit.y + curr_vel.z * _pos_delta_unit.z;
+    _limited_speed_xy_cms = constrain_float(speed_along_track,0,_wp_speed_cms);
+}
+
 /// shift_wp_origin_to_current_pos - shifts the origin and destination so the origin starts at the current position
 ///     used to reset the position just before takeoff
 ///     relies on set_wp_destination or set_wp_origin_and_destination having been called first
@@ -753,6 +820,10 @@ void AC_WPNav::set_spline_origin_and_destination(const Vector3f& origin, const V
         _wp_accel_cms.set_and_save(WPNAV_ACCELERATION);
     }
 
+    // Store Origin and Destination
+    _spline_origin = origin;
+    _spline_destination = destination;
+
     // segment start types
     // stop - vehicle is not moving at origin
     // straight-fast - vehicle is moving, previous segment is straight.  vehicle will fly straight through the waypoint before beginning it's spline path to the next wp
@@ -768,7 +839,7 @@ void AC_WPNav::set_spline_origin_and_destination(const Vector3f& origin, const V
     }else{
     	// look at previous segment to determine velocity at origin
         if (_flags.segment_type == SEGMENT_STRAIGHT) {
-            // previous segment is straight, vehicle is moving so vehicle should fly straight through the origin
+            // previous segment is straight, vehicle is moving so vehicle should flpry straight through the origin
             // before beginning it's spline path to the next waypoint. Note: we are using the previous segment's origin and destination
             _spline_origin_vel = (_destination - _origin);
             _spline_time = 0.0f;	// To-Do: this should be set based on how much overrun there was from straight segment?
@@ -894,6 +965,11 @@ void AC_WPNav::advance_spline_target_along_track(float dt)
 
         // update target position and velocity from spline calculator
         calc_spline_pos_vel(_spline_time, target_pos, target_vel);
+		
+		if(target_vel.length()==0){
+			_flags.reached_destination = true;
+			return;
+		}
 
         _pos_delta_unit = target_vel/target_vel.length();
         calculate_wp_leash_length();

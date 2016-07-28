@@ -27,7 +27,7 @@ const AP_Param::GroupInfo AP_GPS::var_info[] PROGMEM = {
     // @Param: TYPE
     // @DisplayName: GPS type
     // @Description: GPS type
-    // @Values: 0:None,1:AUTO,2:uBlox,3:MTK,4:MTK19,5:NMEA,6:SiRF,7:HIL,8:SwiftNav,9:PX4-UAVCAN
+    // @Values: 0:None,1:AUTO,2:uBlox,3:MTK,4:MTK19,5:NMEA,6:SiRF,7:HIL,8:SwiftNav,9:PX4-UAVCAN,10:Offboard
     // @RebootRequired: True
     AP_GROUPINFO("TYPE",    0, AP_GPS, _type[0], 1),
 
@@ -36,7 +36,7 @@ const AP_Param::GroupInfo AP_GPS::var_info[] PROGMEM = {
     // @Param: TYPE2
     // @DisplayName: 2nd GPS type
     // @Description: GPS type of 2nd GPS
-    // @Values: 0:None,1:AUTO,2:uBlox,3:MTK,4:MTK19,5:NMEA,6:SiRF,7:HIL,8:SwiftNav,9:PX4-UAVCAN
+    // @Values: 0:None,1:AUTO,2:uBlox,3:MTK,4:MTK19,5:NMEA,6:SiRF,7:HIL,8:SwiftNav,9:PX4-UAVCAN,10:Offboard
     // @RebootRequired: True
     AP_GROUPINFO("TYPE2",   1, AP_GPS, _type[1], 0),
 
@@ -334,6 +334,12 @@ AP_GPS::update_instance(uint8_t instance)
         // in HIL, leave info alone
         return;
     }
+
+    if (_type[instance] == GPS_TYPE_OFFBOARD) {
+        // in Offboard, leave info alone
+        return;
+    }
+
     if (_type[instance] == GPS_TYPE_NONE) {
         // not enabled
         state[instance].status = NO_GPS;
@@ -467,6 +473,39 @@ AP_GPS::setHIL(uint8_t instance, GPS_Status _status, uint64_t time_epoch_ms,
     _type[instance].set(GPS_TYPE_HIL);
 }
 
+void
+AP_GPS::setOffboard(uint8_t instance, GPS_Status _status, uint64_t time_epoch_ms,
+               const Location &_location, const Vector3f &_velocity, uint8_t _num_sats,
+               uint16_t hdop, bool _have_vertical_velocity)
+{
+    if (instance >= GPS_MAX_INSTANCES) {
+        return;
+    }
+
+    if(_type[instance].get() != GPS_TYPE_OFFBOARD){
+        return;
+    }
+
+    uint32_t tnow = hal.scheduler->millis();
+    GPS_State &istate = state[instance];
+    istate.status = _status;
+    istate.location = _location;
+    istate.location.options = 0;
+    istate.velocity = _velocity;
+    istate.ground_speed = pythagorous2(istate.velocity.x, istate.velocity.y);
+    istate.ground_course_cd = degrees(atan2f(istate.velocity.y, istate.velocity.x)) * 100UL;
+    istate.hdop = hdop;
+    istate.num_sats = _num_sats;
+    istate.have_vertical_velocity |= _have_vertical_velocity;
+    istate.last_gps_time_ms = tnow;
+    uint64_t gps_time_ms = time_epoch_ms - (17000ULL*86400ULL + 52*10*7000ULL*86400ULL - 15000ULL);
+    istate.time_week     = gps_time_ms / (86400*7*(uint64_t)1000);
+    istate.time_week_ms  = gps_time_ms - istate.time_week*(86400*7*(uint64_t)1000);
+    timing[instance].last_message_time_ms = tnow;
+    timing[instance].last_fix_time_ms = tnow;
+    _type[instance].set(GPS_TYPE_OFFBOARD);
+}
+
 /**
    Lock a GPS port, prevening the GPS driver from using it. This can
    be used to allow a user to control a GPS port via the
@@ -546,6 +585,25 @@ AP_GPS::send_mavlink_gps_raw(mavlink_channel_t chan)
         ground_speed(0)*100,  // cm/s
         ground_course_cd(0), // 1/100 degrees,
         num_sats(0));
+		
+	/*mavlink_msg_highres_imu_send(
+		chan, 
+		last_fix_time_ms(0)*(uint64_t)1000, 
+		_GPS_STATE(0).velocity.x, 
+		_GPS_STATE(0).velocity.y, 
+		_GPS_STATE(0).velocity.z, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0, 
+		0);
+	*/
 }
 
 #if GPS_MAX_INSTANCES > 1
@@ -577,6 +635,7 @@ AP_GPS::send_mavlink_gps2_raw(mavlink_channel_t chan)
         num_sats(1),
         0,
         0);
+        
 }
 #endif
 

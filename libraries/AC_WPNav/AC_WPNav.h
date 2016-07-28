@@ -20,8 +20,8 @@
 #define WPNAV_LOITER_JERK_MAX_DEFAULT  1000.0f      // maximum jerk in cm/s/s/s in loiter mode
 
 #define WPNAV_WP_SPEED                  500.0f      // default horizontal speed betwen waypoints in cm/s
-#define WPNAV_WP_SPEED_MIN              100.0f      // minimum horizontal speed between waypoints in cm/s
-#define WPNAV_WP_TRACK_SPEED_MIN         50.0f      // minimum speed along track of the target point the vehicle is chasing in cm/s (used as target slows down before reaching destination)
+#define WPNAV_WP_SPEED_MIN                5.0f      // minimum horizontal speed between waypoints in cm/s
+#define WPNAV_WP_TRACK_SPEED_MIN          5.0f      // minimum speed along track of the target point the vehicle is chasing in cm/s (used as target slows down before reaching destination)
 #define WPNAV_WP_RADIUS                 200.0f      // default waypoint radius in cm
 
 #define WPNAV_WP_SPEED_UP               250.0f      // default maximum climb velocity
@@ -127,11 +127,25 @@ public:
     /// get_wp_destination waypoint using position vector (distance from home in cm)
     const Vector3f &get_wp_destination() const { return _destination; }
 
+    /// get_spline_wp_origin waypoint using position vector (distance from home in cm)
+    const Vector3f &get_spline_wp_origin() const { return _spline_origin; }
+
+    /// get_spline_wp_destination waypoint using position vector (distance from home in cm)
+    const Vector3f &get_spline_wp_destination() const { return _spline_destination; }
+
     /// set_wp_destination waypoint using position vector (distance from home in cm)
     void set_wp_destination(const Vector3f& destination);
 
     /// set_wp_origin_and_destination - set origin and destination waypoints using position vectors (distance from home in cm)
     void set_wp_origin_and_destination(const Vector3f& origin, const Vector3f& destination);
+	
+	// Verge Aero
+	/// set_wp_destination waypoint using position vector (distance from home in cm)
+    void set_wp_destination(const Vector3f& destination, bool fast);
+
+	// Verge Aero
+    /// set_wp_origin_and_destination - set origin and destination waypoints using position vectors (distance from home in cm)
+    void set_wp_origin_and_destination(const Vector3f& origin, const Vector3f& destination, bool fast);
 
     /// shift_wp_origin_to_current_pos - shifts the origin and destination so the origin starts at the current position
     ///     used to reset the position just before takeoff
@@ -305,6 +319,8 @@ protected:
     float       _spline_time_scale;     // current spline time between origin and destination
     Vector3f    _spline_origin_vel;     // the target velocity vector at the origin of the spline segment
     Vector3f    _spline_destination_vel;// the target velocity vector at the destination point of the spline segment
+    Vector3f    _spline_origin;         // the target origin of the spline segment
+    Vector3f    _spline_destination;    // the target destination of the spline segment
     Vector3f    _hermite_spline_solution[4]; // array describing spline path between origin and destination
     float       _spline_vel_scaler;	    //
     float       _yaw;                   // heading according to yaw

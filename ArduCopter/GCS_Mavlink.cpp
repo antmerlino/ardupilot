@@ -294,17 +294,77 @@ void NOINLINE Copter::send_location(mavlink_channel_t chan)
         ahrs.yaw_sensor);               // compass heading in 1/100 degree
 }
 
+void NOINLINE Copter::send_local_position(mavlink_channel_t chan)
+{	
+	const Vector3f &pos = inertial_nav.get_position();
+	const Vector3f &vel = inertial_nav.get_velocity();
+    mavlink_msg_local_position_ned_send(
+        chan,
+        millis(),
+        pos.x,
+        pos.y,
+        pos.z,
+        vel.x,
+        vel.y,
+        vel.z);
+}
+
+void NOINLINE Copter::send_local_inertial_nav(mavlink_channel_t chan)
+{
+    const Vector3f &pos = inertial_nav.get_position();
+    const Vector3f &vel = inertial_nav.get_velocity();
+    Location origin = inertial_nav.get_origin();
+
+    mavlink_msg_local_inertial_nav_ned_send(
+            chan,
+            millis(),
+            origin.lat,
+            origin.lng,
+            origin.alt,
+            pos.x,
+            pos.y,
+            pos.z,
+            vel.x,
+            vel.y,
+            vel.z);
+}
+
+void NOINLINE Copter::send_waypoint_nav(mavlink_channel_t chan)
+{
+    Vector3f dest = wp_nav.get_wp_destination();
+    Vector3f spline_dest = wp_nav.get_spline_wp_destination();
+    Vector3f spline_origin = wp_nav.get_spline_wp_origin();
+    Vector3f target = pos_control.get_pos_target();
+
+    mavlink_msg_waypoint_nav_send(
+            chan,
+            dest.x,
+            dest.y,
+            dest.z,
+            spline_dest.x,
+            spline_dest.y,
+            spline_dest.z,
+            spline_origin.x,
+            spline_origin.y,
+            spline_origin.z,
+            target.x,
+            target.y,
+            target.z,
+            copter.get_number_waypoints_remaining());
+}
+
 void NOINLINE Copter::send_nav_controller_output(mavlink_channel_t chan)
 {
     const Vector3f &targets = attitude_control.angle_ef_targets();
+
     mavlink_msg_nav_controller_output_send(
         chan,
         targets.x / 1.0e2f,
         targets.y / 1.0e2f,
         targets.z / 1.0e2f,
-        wp_bearing / 1.0e2f,
+		wp_bearing / 1.0e2f,
         wp_distance / 1.0e2f,
-        pos_control.get_alt_error() / 1.0e2f,
+		pos_control.get_alt_error() / 1.0e2f,
         0,
         0);
 }
@@ -563,7 +623,7 @@ bool GCS_MAVLINK::try_send_message(enum ap_message id)
 
     case MSG_LOCAL_POSITION:
         CHECK_PAYLOAD_SIZE(LOCAL_POSITION_NED);
-        send_local_position(copter.ahrs);
+		copter.send_local_position(chan);
         break;
 
     case MSG_NAV_CONTROLLER_OUTPUT:
@@ -735,6 +795,16 @@ bool GCS_MAVLINK::try_send_message(enum ap_message id)
     case MSG_MISSION_ITEM_REACHED:
         CHECK_PAYLOAD_SIZE(MISSION_ITEM_REACHED);
         mavlink_msg_mission_item_reached_send(chan, mission_item_reached_index);
+        break;
+
+    case MSG_LOCAL_INERTIAL_NAV:
+        CHECK_PAYLOAD_SIZE(LOCAL_INERTIAL_NAV_NED);
+        copter.send_local_inertial_nav(chan);
+        break;
+
+    case MSG_WAYPOINT_NAV:
+        CHECK_PAYLOAD_SIZE(WAYPOINT_NAV);
+        copter.send_waypoint_nav(chan);
         break;
 
     case MSG_RETRY_DEFERRED:
@@ -910,13 +980,14 @@ GCS_MAVLINK::data_stream_send(void)
         send_message(MSG_GPS_RAW);
         send_message(MSG_NAV_CONTROLLER_OUTPUT);
         send_message(MSG_LIMITS_STATUS);
+        send_message(MSG_WAYPOINT_NAV);
     }
 
     if (copter.gcs_out_of_time) return;
 
     if (stream_trigger(STREAM_POSITION)) {
         send_message(MSG_LOCATION);
-        send_message(MSG_LOCAL_POSITION);
+        send_message(MSG_LOCAL_INERTIAL_NAV);
     }
 
     if (copter.gcs_out_of_time) return;
@@ -996,6 +1067,21 @@ void GCS_MAVLINK::handleMessage(mavlink_message_t* msg)
         copter.pmTest1++;
         break;
     }
+	
+	// Verge Aero
+	case MAVLINK_MSG_ID_PING:	  // MAV ID 4
+	{
+		mavlink_ping_t packet;
+		mavlink_msg_ping_decode(msg, &packet);
+		mavlink_msg_ping_send(
+			chan, 
+			packet.time_usec, 
+			packet.seq, 
+			packet.target_system, 
+			packet.target_component
+			);
+		break;
+	}
 
     case MAVLINK_MSG_ID_SET_MODE:       // MAV ID: 11
     {
@@ -1235,21 +1321,45 @@ void GCS_MAVLINK::handleMessage(mavlink_message_t* msg)
             break;
 
         case MAV_CMD_DO_SET_ROI:
-            // param1 : regional of interest mode (not supported)
+            // param1 : regional of interest mode
             // param2 : mission index/ target id (not supported)
             // param3 : ROI index (not supported)
             // param5 : x / lat
             // param6 : y / lon
             // param7 : z / alt
-            // sanity check location
-            if (fabsf(packet.param5) > 90.0f || fabsf(packet.param6) > 180.0f) {
-                break;
-            }
+
             Location roi_loc;
-            roi_loc.lat = (int32_t)(packet.param5 * 1.0e7f);
-            roi_loc.lng = (int32_t)(packet.param6 * 1.0e7f);
+
+            // Parse parameter 1
+            switch ((uint16_t)packet.param1) {
+                // If a local position is given to ROI command, parse using local coordinates
+                case MAV_ROI_LOCATION_LOCAL_ENU:
+                    // Create Location Vector
+                    roi_loc.x = (int32_t)(packet.param6 * 1e3f); // Flips x and y to go from East, North to North, East
+                    roi_loc.y = (int32_t)(packet.param5 * 1e3f); // Flips x and y to go from East, North to North, East
+
+                    // Flag for Relative
+                    roi_loc.flags.relative_xy = 1;
+                    break;
+                // This is the original behavior of MAV_CMD_DO_SET_ROI
+                default:
+                    // sanity check location
+                    if (fabsf(packet.param5) > 90.0f || fabsf(packet.param6) > 180.0f) {
+                        break;
+                    }
+
+                    // Store Lat and Long
+                    roi_loc.lat = (int32_t)(packet.param5 * 1.0e7f);
+                    roi_loc.lng = (int32_t)(packet.param6 * 1.0e7f);
+
+                    // Flag for Global
+                    roi_loc.flags.relative_xy = 0;
+                    break;
+            }
+
             roi_loc.alt = (int32_t)(packet.param7 * 100.0f);
             copter.set_auto_yaw_roi(roi_loc);
+
             result = MAV_RESULT_ACCEPTED;
             break;
 
@@ -1616,6 +1726,13 @@ void GCS_MAVLINK::handleMessage(mavlink_message_t* msg)
         break;
     }
 
+    case MAVLINK_MSG_ID_ALTITUDE_SENSOR:
+    {
+        result = MAV_RESULT_ACCEPTED;
+        copter.barometer.handle_msg(msg);
+        break;
+    }
+
 #if HIL_MODE != HIL_MODE_DISABLED
     case MAVLINK_MSG_ID_HIL_STATE:          // MAV ID: 90
     {
@@ -1796,6 +1913,33 @@ void GCS_MAVLINK::handleMessage(mavlink_message_t* msg)
         // send message to Notify
         AP_Notify::handle_led_control(msg);
         break;
+
+    case MAVLINK_MSG_ID_SET_OFFBOARD_GPS: {       // MAV ID: 230
+        mavlink_set_offboard_gps_t packet;
+        mavlink_msg_set_offboard_gps_decode(msg, &packet);
+
+        // set gps hil sensor
+        Location loc;
+        loc.lat = packet.lat;
+        loc.lng = packet.lon;
+        loc.alt = packet.alt/10.0f; // Convert to cm
+
+        Vector3f vel(packet.vx, packet.vy, packet.vz);
+        vel *= 0.01f; // Convert to cm
+
+        copter.gps.setOffboard(0, (AP_GPS::GPS_Status)packet.gps_status,
+                   packet.time_usec/1000,
+                   loc, vel, packet.num_sats, packet.hdop, packet.vert_vel);
+        break;
+    }
+
+    case MAVLINK_MSG_ID_SET_OFFBOARD_RANGEFINDER: {   // MAV ID: 231
+        mavlink_set_offboard_rangefinder_t offboardRngPacket;
+        mavlink_msg_set_offboard_rangefinder_decode(msg, &offboardRngPacket);
+
+        copter.sonar.set_offboard_range_finder(offboardRngPacket.instance, offboardRngPacket.distance_cm);
+        break;
+    }
 
     }     // end switch
 } // end handle mavlink

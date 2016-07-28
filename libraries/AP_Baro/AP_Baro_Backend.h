@@ -19,6 +19,8 @@ public:
     // trigger them to read the sensor
     virtual void accumulate(void) {}
 
+    virtual void handle_msg(mavlink_message_t *msg) { return; };
+
 protected:
     // reference to frontend object
     AP_Baro &_frontend;

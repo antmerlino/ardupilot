@@ -53,6 +53,18 @@ const AP_Param::GroupInfo AP_Baro::var_info[] PROGMEM = {
     // @Increment: 1
     AP_GROUPINFO("ALT_OFFSET", 4, AP_Baro, _alt_offset, 0),
 
+    // @Param: PRIMARY
+    // @DisplayName: Primary barometer
+    // @Description: This selects which barometer will be the primary if multiple barometers are found
+    // @Values: 0:FirstBaro,1:2ndBaro,2:3rdBaro
+    AP_GROUPINFO("PRIMARY", 6, AP_Baro, _primary_baro, 0),
+
+    // @Param: MAVLINK_BARO
+    // @DisplayName: Mavlink barometer
+    // @Description: This enables/disables a Mavlink baromter if there is an available instance
+    // @Values: 0:Disabled, 1:Enabled
+    AP_GROUPINFO("MAV_BARO", 7, AP_Baro, _mavlink_baro, 0),
+
     AP_GROUPEND
 };
 
@@ -67,7 +79,8 @@ AP_Baro::AP_Baro() :
         _EAS2TAS(0.0f),
         _external_temperature(0.0f),
         _last_external_temperature_ms(0),
-        _hil_mode(false)
+        _hil_mode(false),
+        _mavlink_baro_sensor(-1)
 {
     memset(sensors, 0, sizeof(sensors));
 
@@ -300,7 +313,16 @@ void AP_Baro::init(void)
         drivers[0] = new AP_Baro_MS5607(*this, new AP_SerialBus_I2C(hal.i2c1, HAL_BARO_MS5607_I2C_ADDR), true);
         _num_drivers = 1;
     }
-#endif    
+#endif
+
+    // If a mavlink barometer is enabled and there is enough room for the driver/sensor
+    if(_mavlink_baro && _num_sensors < BARO_MAX_INSTANCES && _num_drivers < BARO_MAX_DRIVERS) {
+        // Need to get the mavlink sensor number so that it can take dominance over the primary
+        _mavlink_baro_sensor = _num_sensors;
+        drivers[_num_drivers] = new AP_Baro_MAVLink(*this);
+        _num_drivers++;
+    }
+
     if (_num_drivers == 0 || _num_sensors == 0 || drivers[0] == NULL) {
         hal.scheduler->panic(PSTR("Baro: unable to initialise driver"));
     }
@@ -337,19 +359,33 @@ void AP_Baro::update(void)
         }
     }
 
-    // choose primary sensor
-    _primary = 0;
-    for (uint8_t i=0; i<_num_sensors; i++) {
-        if (healthy(i)) {
-            _primary = i;
-            break;
-        }
-    }
-
     // ensure the climb rate filter is updated
     if (healthy()) {
         _climb_rate_filter.update(get_altitude(), get_last_update());
     }
+
+    // If a MAVLink barometer is used and it is otherwise healthy consider it calibrated
+    if(_mavlink_baro && _mavlink_baro_sensor >= 0) {
+        if(!healthy(_mavlink_baro_sensor) && sensors[_mavlink_baro_sensor].healthy && sensors[_mavlink_baro_sensor].alt_ok) {
+            sensors[_mavlink_baro_sensor].calibrated = true;
+        }
+    }
+
+    // If a MAVLink barometer is used and it is healthy, it should take dominance over all others
+    if(_mavlink_baro && (_mavlink_baro_sensor >= 0) && healthy(_mavlink_baro_sensor)) {
+        _primary = _mavlink_baro_sensor;
+    } else if (_primary_baro >= 0 && _primary_baro < _num_sensors && healthy(_primary_baro)) {
+        _primary = _primary_baro;
+    } else {
+        _primary = 0;
+        for (uint8_t i=0; i<_num_sensors; i++) {
+            if (healthy(i)) {
+                _primary = i;
+                break;
+            }
+        }
+    }
+
 }
 
 /*
@@ -362,6 +398,14 @@ void AP_Baro::accumulate(void)
     }
 }
 
+void AP_Baro::handle_msg(mavlink_message_t *msg) {
+  uint8_t i;
+  for (i=0; i < _num_sensors; i++) {
+      if (drivers[i] != NULL) {
+          drivers[i]->handle_msg(msg);
+      }
+  }
+}
 
 /* register a new sensor, claiming a sensor slot. If we are out of
    slots it will panic
