@@ -30,8 +30,16 @@ void Copter::gcs_send_deferred(void)
 NOINLINE void Copter::send_heartbeat(mavlink_channel_t chan)
 {
     uint8_t base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
-    uint8_t system_status = ap.land_complete ? MAV_STATE_STANDBY : MAV_STATE_ACTIVE;
+    uint8_t system_status;
     uint32_t custom_mode = control_mode;
+
+    if(!ap.initialised) {
+        system_status = MAV_STATE_BOOT;
+    } else if (ap.land_complete) {
+        system_status = MAV_STATE_STANDBY;
+    } else {
+        system_status = MAV_STATE_ACTIVE;
+    }
 
     // set system as critical if any failsafe have triggered
     if (failsafe.radio || failsafe.battery || failsafe.gcs || failsafe.ekf || failsafe.terrain || failsafe.adsb)  {
@@ -1669,6 +1677,31 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
             break;
         }
 
+	case MAV_CMD_GCS_CONTROL_RATES: {
+            copter.gcs_control.set_rates(packet.param1, packet.param2, packet.param3);
+            result = MAV_RESULT_ACCEPTED;
+            break;
+        }
+
+        case MAV_CMD_GCS_CONTROL_ATTITUDE: {
+            copter.gcs_control.set_attitude(packet.param1, packet.param2, packet.param3);
+            result = MAV_RESULT_ACCEPTED;
+            break;
+        }
+
+        case MAV_CMD_GCS_CONTROL_THROTTLE: {
+            if(packet.param2 == GCS_THROTTLE_MODE_TRIM){
+                copter.gcs_control.set_throttle_trim((int16_t)packet.param1);
+            }else {
+                copter.gcs_control.set_throttle((int16_t)packet.param1);
+            }
+
+            copter.gcs_control.set_throttle_mode((int8_t)packet.param2);
+
+            result = MAV_RESULT_ACCEPTED;
+            break;
+        }
+
         default:
             result = MAV_RESULT_UNSUPPORTED;
             break;
@@ -1825,7 +1858,11 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
             break;
         }
 
-        bool pos_ignore      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE;
+        // If any of the dimensions in one type are ignored, ignore everything (AM)
+        bool pos_ignore_xy      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_POS_XY_IGNORE;
+        bool pos_ignore_z      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_POS_Z_IGNORE;
+        bool pos_ignore      = pos_ignore_xy && pos_ignore_z;
+
         bool vel_ignore      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE;
         bool acc_ignore      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE;
 
@@ -1835,6 +1872,8 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
          * bool yaw_ignore      = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE;
          * bool yaw_rate_ignore = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE;
          */
+
+        bool allow_takeoff            = packet.type_mask & MAVLINK_SET_POS_TYPE_MASK_TAKEOFF;
 
         Vector3f pos_ned;
 
@@ -1870,12 +1909,20 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
             pos_ned = copter.pv_location_to_vector(loc);
         }
 
+        if(allow_takeoff) {
+            copter.guided_allow_takeoff();
+        }
+
         if (!pos_ignore && !vel_ignore && acc_ignore) {
             copter.guided_set_destination_posvel(pos_ned, Vector3f(packet.vx * 100.0f, packet.vy * 100.0f, -packet.vz * 100.0f));
         } else if (pos_ignore && !vel_ignore && acc_ignore) {
             copter.guided_set_velocity(Vector3f(packet.vx * 100.0f, packet.vy * 100.0f, -packet.vz * 100.0f));
         } else if (!pos_ignore && vel_ignore && acc_ignore) {
-            if (!copter.guided_set_destination(pos_ned)) {
+            if(!pos_ignore_xy && !pos_ignore_z) {
+                copter.guided_set_target(pos_ned);
+            } else if (pos_ignore_xy && !pos_ignore_z) {
+                copter.guided_set_altitude(pos_ned.z);
+            } else {
                 result = MAV_RESULT_FAILED;
             }
         } else {
