@@ -656,8 +656,10 @@ void AC_PosControl::update_xy_controller(xy_mode mode, float ekfNavVelGainScaler
     // check if xy leash needs to be recalculated
     calc_leash_length_xy();
 
-    // translate any adjustments from pilot to loiter target
-    desired_vel_to_pos(dt);
+    if(mode != XY_MODE_POS_AND_VEL_FF) {
+        // translate any adjustments from pilot to loiter target
+        desired_vel_to_pos(dt);
+    }
 
     // run position controller's position error to desired velocity step
     pos_to_rate_xy(mode, dt, ekfNavVelGainScaler);

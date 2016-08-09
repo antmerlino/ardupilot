@@ -89,6 +89,7 @@
 #include <AC_InputManager/AC_InputManager.h>        // Pilot input handling library
 #include <AC_InputManager/AC_InputManager_Heli.h>   // Heli specific pilot input handling library
 #include <AP_Button/AP_Button.h>
+#include <GCS_Control/GCS_Control.h>          // Ground Control Station Control library
 
 // Configuration
 #include "defines.h"
@@ -163,6 +164,9 @@ private:
     RC_Channel *channel_pitch;
     RC_Channel *channel_throttle;
     RC_Channel *channel_yaw;
+
+    // GCS Control
+    GCS_Control gcs_control;
 
     // Dataflash
     DataFlash_Class DataFlash;
@@ -803,19 +807,26 @@ private:
     bool flip_init(bool ignore_checks);
     void flip_run();
     bool guided_init(bool ignore_checks);
+    void guided_allow_takeoff();
     bool guided_takeoff_start(float final_alt_above_home);
+    void guided_wp_control_start();
     void guided_pos_control_start();
+    void guided_alt_control_start();
     void guided_vel_control_start();
     void guided_posvel_control_start();
     void guided_angle_control_start();
     bool guided_set_destination(const Vector3f& destination);
     bool guided_set_destination(const Location_Class& dest_loc);
+    void guided_set_target(const Vector3f& target);
+    void guided_set_altitude(float alt);
     void guided_set_velocity(const Vector3f& velocity);
     void guided_set_destination_posvel(const Vector3f& destination, const Vector3f& velocity);
     void guided_set_angle(const Quaternion &q, float climb_rate_cms);
     void guided_run();
     void guided_takeoff_run();
+    void guided_wp_control_run();
     void guided_pos_control_run();
+    void guided_alt_control_run();
     void guided_vel_control_run();
     void guided_posvel_control_run();
     void guided_angle_control_run();
@@ -873,6 +884,8 @@ private:
     void sport_run();
     bool stabilize_init(bool ignore_checks);
     void stabilize_run();
+    bool stabilize_np_init(bool ignore_checks);
+    void stabilize_np_run();
     void crash_check();
     void parachute_check();
     void parachute_release();

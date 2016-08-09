@@ -18,6 +18,8 @@ static Vector3f guided_vel_target_cms;      // velocity target (used by velocity
 static uint32_t posvel_update_time_ms;      // system time of last target update to posvel controller (i.e. position and velocity update)
 static uint32_t vel_update_time_ms;         // system time of last target update to velocity controller
 
+static bool posvel_allow_takeoff = false;
+
 struct {
     uint32_t update_time_ms;
     float roll_cd;
@@ -42,13 +44,22 @@ bool Copter::guided_init(bool ignore_checks)
         // initialise yaw
         set_auto_yaw_mode(get_default_auto_yaw_mode(false));
         // start in position control mode
-        guided_pos_control_start();
+        guided_wp_control_start();
         return true;
     }else{
         return false;
     }
 }
 
+void Copter::guided_allow_takeoff(void) {
+    // If we are allowing takeoff, and we are landed, armed, and motors are enabled, configure everything for takeoff
+    if(ap.land_complete && motors.armed() && motors.get_interlock()) {
+        posvel_allow_takeoff = true;
+        // clear i term when we're taking off
+        set_throttle_takeoff();
+        set_auto_armed(true);
+    }
+}
 
 // guided_takeoff_start - initialises waypoint controller to implement take-off
 bool Copter::guided_takeoff_start(float final_alt_above_home)
@@ -79,9 +90,9 @@ bool Copter::guided_takeoff_start(float final_alt_above_home)
 }
 
 // initialise guided mode's position controller
-void Copter::guided_pos_control_start()
+void Copter::guided_wp_control_start()
 {
-    // set to position control mode
+    // set to waypoint control mode
     guided_mode = Guided_WP;
 
     // initialise waypoint and spline controller
@@ -99,6 +110,47 @@ void Copter::guided_pos_control_start()
 
     // initialise yaw
     set_auto_yaw_mode(get_default_auto_yaw_mode(false));
+}
+
+void Copter::guided_pos_control_start() {
+    // set guided_mode to position controller
+    guided_mode = Guided_Pos;
+
+    pos_control.init_xy_controller();
+
+    // set speed and acceleration from wpnav's speed and acceleration
+    pos_control.set_speed_xy(wp_nav.get_speed_xy());
+    pos_control.set_accel_xy(wp_nav.get_wp_acceleration());
+
+    const Vector3f& curr_pos = inertial_nav.get_position();
+    const Vector3f& curr_vel = inertial_nav.get_velocity();
+
+    // set target position and velocity to current position and velocity
+    pos_control.set_xy_target(curr_pos.x, curr_pos.y);
+    pos_control.set_desired_velocity_xy(curr_vel.x, curr_vel.y);
+
+    // set vertical speed and acceleration
+    pos_control.set_speed_z(wp_nav.get_speed_down(), wp_nav.get_speed_up());
+    pos_control.set_accel_z(wp_nav.get_accel_z());
+
+    // pilot always controls yaw
+    set_auto_yaw_mode(AUTO_YAW_HOLD);
+}
+
+void Copter::guided_alt_control_start() {
+    // set guided_mode to altitude controller
+    guided_mode = Guided_Alt;
+
+    // set vertical speed and acceleration
+    pos_control.set_speed_z(wp_nav.get_speed_down(), wp_nav.get_speed_up());
+    pos_control.set_accel_z(wp_nav.get_accel_z());
+
+    // initialise position and desired velocity
+    pos_control.set_alt_target(inertial_nav.get_altitude());
+    pos_control.set_desired_velocity_z(inertial_nav.get_velocity_z());
+
+    // pilot always controls yaw
+    set_auto_yaw_mode(AUTO_YAW_HOLD);
 }
 
 // initialise guided mode's velocity controller
@@ -175,7 +227,7 @@ bool Copter::guided_set_destination(const Vector3f& destination)
 {
     // ensure we are in position control mode
     if (guided_mode != Guided_WP) {
-        guided_pos_control_start();
+        guided_wp_control_start();
     }
 
 #if AC_FENCE == ENABLED
@@ -228,9 +280,32 @@ bool Copter::guided_set_destination(const Location_Class& dest_loc)
     return true;
 }
 
+void Copter::guided_set_target(const Vector3f& target) {
+    // check we are in position control mode
+    if (guided_mode != Guided_Pos) {
+        guided_pos_control_start();
+    }
+
+    posvel_update_time_ms = millis();
+    guided_pos_target_cm = target;
+
+    pos_control.set_pos_target(guided_pos_target_cm);
+}
+
+void Copter::guided_set_altitude(float alt){
+    // check we are in position control mode
+    if (guided_mode != Guided_Alt) {
+        guided_alt_control_start();
+    }
+
+    posvel_update_time_ms = millis();
+    guided_pos_target_cm.z = alt;
+
+    pos_control.set_alt_target(guided_pos_target_cm.z);
+}
+
 // guided_set_velocity - sets guided mode's target velocity
-void Copter::guided_set_velocity(const Vector3f& velocity)
-{
+void Copter::guided_set_velocity(const Vector3f& velocity) {
     // check we are in velocity control mode
     if (guided_mode != Guided_Velocity) {
         guided_vel_control_start();
@@ -302,8 +377,18 @@ void Copter::guided_run()
         break;
 
     case Guided_WP:
+        // run waypoint controller
+        guided_wp_control_run();
+        break;
+
+    case Guided_Pos:
         // run position controller
         guided_pos_control_run();
+        break;
+
+    case Guided_Alt:
+        // run altitude controller
+        guided_alt_control_run();
         break;
 
     case Guided_Velocity:
@@ -363,7 +448,7 @@ void Copter::guided_takeoff_run()
 
 // guided_pos_control_run - runs the guided position controller
 // called from guided_run
-void Copter::guided_pos_control_run()
+void Copter::guided_wp_control_run()
 {
     // if not auto armed or motors not enabled set throttle to zero and exit immediately
     if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || ap.land_complete) {
@@ -408,12 +493,105 @@ void Copter::guided_pos_control_run()
     }
 }
 
+void Copter::guided_pos_control_run() {
+    // if not auto armed or motors not enabled set throttle to zero and exit immediately
+    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || (ap.land_complete & !posvel_allow_takeoff)) {
+        // set target position and velocity to current position and velocity
+        pos_control.set_pos_target(inertial_nav.get_position());
+        pos_control.set_desired_velocity(Vector3f(0,0,0));
+#if FRAME_CONFIG == HELI_FRAME  // Helicopters always stabilize roll/pitch/yaw
+        // call attitude controller
+        attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(0, 0, 0, get_smoothing_gain());
+        attitude_control.set_throttle_out(0,false,g.throttle_filt);
+#else
+        motors.set_desired_spool_state(AP_Motors::DESIRED_SPIN_WHEN_ARMED);
+        // multicopters do not stabilize roll/pitch/yaw when disarmed
+        attitude_control.set_throttle_out_unstabilized(0,true,g.throttle_filt);
+#endif
+        return;
+    }
+
+    // process pilot's yaw input
+    float target_yaw_rate = 0;
+    if (!failsafe.radio) {
+        // get pilot's desired yaw rate
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        if (!is_zero(target_yaw_rate)) {
+            set_auto_yaw_mode(AUTO_YAW_HOLD);
+        }
+    }
+
+    // set motors to full range
+    motors.set_desired_spool_state(AP_Motors::DESIRED_THROTTLE_UNLIMITED);
+
+    // calculate dt
+    float dt = pos_control.time_since_last_xy_update();
+
+    // update at poscontrol update rate
+    if (dt >= pos_control.get_dt_xy()) {
+        // sanity check dt
+        if (dt >= 0.2f) {
+            dt = 0.0f;
+        }
+
+        // send position and velocity targets to position controller
+        pos_control.set_pos_target(guided_pos_target_cm);
+
+        // run position controller
+        pos_control.update_xy_controller(AC_PosControl::XY_MODE_POS_ONLY, ekfNavVelGainScaler, false);
+    }
+
+    pos_control.update_z_controller();
+
+    // call attitude controller
+    if (auto_yaw_mode == AUTO_YAW_HOLD) {
+        // roll & pitch from waypoint controller, yaw rate from pilot
+        attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(pos_control.get_roll(), pos_control.get_pitch(), target_yaw_rate, get_smoothing_gain());
+    }else{
+        // roll, pitch from waypoint controller, yaw heading from auto_heading()
+        attitude_control.input_euler_angle_roll_pitch_yaw(pos_control.get_roll(), pos_control.get_pitch(), get_auto_heading(), true, get_smoothing_gain());
+    }
+}
+
+void Copter::guided_alt_control_run() {
+    // if not auto armed or motors not enabled set throttle to zero and exit immediately
+    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || (ap.land_complete & !posvel_allow_takeoff)) {
+        // set target position and velocity to current position and velocity
+        pos_control.set_pos_target(inertial_nav.get_position());
+        pos_control.set_desired_velocity(Vector3f(0,0,0));
+#if FRAME_CONFIG == HELI_FRAME  // Helicopters always stabilize roll/pitch/yaw
+        // call attitude controller
+        attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(0, 0, 0, get_smoothing_gain());
+        attitude_control.set_throttle_out(0,false,g.throttle_filt);
+#else
+        motors.set_desired_spool_state(AP_Motors::DESIRED_SPIN_WHEN_ARMED);
+        // multicopters do not stabilize roll/pitch/yaw when disarmed
+        attitude_control.set_throttle_out_unstabilized(0,true,g.throttle_filt);
+#endif
+        return;
+    }
+
+
+    // set motors to full range
+    motors.set_desired_spool_state(AP_Motors::DESIRED_THROTTLE_UNLIMITED);
+
+    // calculate dt
+    float dt = pos_control.time_since_last_xy_update();
+
+    pos_control.set_alt_target(guided_pos_target_cm.z);
+
+    pos_control.update_z_controller();
+
+    // call attitude controller
+    attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(0, 0, 0, get_smoothing_gain());
+}
+
 // guided_vel_control_run - runs the guided velocity controller
 // called from guided_run
 void Copter::guided_vel_control_run()
 {
     // if not auto armed or motors not enabled set throttle to zero and exit immediately
-    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || ap.land_complete) {
+    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || (ap.land_complete & !posvel_allow_takeoff)) {
         // initialise velocity controller
         pos_control.init_vel_controller_xyz();
 #if FRAME_CONFIG == HELI_FRAME  // Helicopters always stabilize roll/pitch/yaw
@@ -467,7 +645,7 @@ void Copter::guided_vel_control_run()
 void Copter::guided_posvel_control_run()
 {
     // if not auto armed or motors not enabled set throttle to zero and exit immediately
-    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || ap.land_complete) {
+    if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || (ap.land_complete & !posvel_allow_takeoff)) {
         // set target position and velocity to current position and velocity
         pos_control.set_pos_target(inertial_nav.get_position());
         pos_control.set_desired_velocity(Vector3f(0,0,0));
