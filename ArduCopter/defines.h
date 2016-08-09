@@ -107,6 +107,7 @@ enum control_mode_t {
     THROW =        18,  // throw to launch mode using inertial/GPS system, no pilot input
     AVOID_ADSB =   19,  // automatic avoidance of obstacles in the macro scale - e.g. full-sized aircraft
     GUIDED_NOGPS = 20,  // guided mode but only accepts attitude and altitude
+    STABILIZE_NP = 30   // manual airframe angle with input from GCS
 };
 
 enum mode_reason_t {
@@ -208,6 +209,8 @@ enum AutoMode {
 enum GuidedMode {
     Guided_TakeOff,
     Guided_WP,
+    Guided_Pos,
+    Guided_Alt,
     Guided_Velocity,
     Guided_PosVel,
     Guided_Angle,
@@ -475,11 +478,14 @@ enum DevOptions {
 
 // for mavlink SET_POSITION_TARGET messages
 #define MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE      ((1<<0) | (1<<1) | (1<<2))
+#define MAVLINK_SET_POS_TYPE_MASK_POS_XY_IGNORE   ((1<<0) | (1<<1))
+#define MAVLINK_SET_POS_TYPE_MASK_POS_Z_IGNORE    (1<<2)
 #define MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE      ((1<<3) | (1<<4) | (1<<5))
 #define MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE      ((1<<6) | (1<<7) | (1<<8))
 #define MAVLINK_SET_POS_TYPE_MASK_FORCE           (1<<9)
 #define MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE      (1<<10)
 #define MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE (1<<11)
+#define MAVLINK_SET_POS_TYPE_MASK_TAKEOFF         (1<<12)
 
 // for PILOT_THR_BHV parameter
 #define THR_BEHAVE_FEEDBACK_FROM_MID_STICK (1<<0)
