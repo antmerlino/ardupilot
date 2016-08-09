@@ -11,7 +11,7 @@
 
 #define GCS_ATTITUDE_THRESHOLD 1000
 #define GCS_YAWRATE_THRESHOLD 10000
-#define GCS_THROTTLE_TRIM_THRESHOLD 150
+#define GCS_THROTTLE_TRIM_THRESHOLD 0.10f
 
 #define GCS_THROTTLE_MODE_TRIM 0
 #define GCS_THROTTLE_MODE_ABSOLUTE 1
@@ -29,8 +29,8 @@ class GCS_Control {
         float get_y_rate(void);
         float get_z_rate(void);
 
-        int16_t get_throttle();
-        int16_t get_throttle_trim();
+        float get_throttle();
+        float get_throttle_trim();
 
         int8_t get_throttle_mode();
 
@@ -40,8 +40,8 @@ class GCS_Control {
 
         void set_attitude(float p, float r, float yawRate);  // centi-degree
 
-        void set_throttle(int16_t thr);
-        void set_throttle_trim(int16_t trim);
+        void set_throttle(float thr);
+        void set_throttle_trim(float trim);
         void set_throttle_mode(int8_t mode); // 0: Trimmed Throttle 1: Absolute Throttle
 
     private:
@@ -52,8 +52,8 @@ class GCS_Control {
         float _pitch;
         float _roll;
         float _yaw_rate;
-        int16_t _throttle;
-        int16_t _throttle_trim;
+        float _throttle;
+        float _throttle_trim;
 
         int8_t _throttle_mode = GCS_THROTTLE_MODE_TRIM;
 
