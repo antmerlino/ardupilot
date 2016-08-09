@@ -36,7 +36,7 @@ void GCS_Control::init_gcs_control()
     _yaw_rate = 0;
     _throttle = 0;
 
-    _throttle_trim = 0;
+    _throttle_trim = 0.0f;
     _throttle_mode = GCS_THROTTLE_MODE_TRIM;
 }
 
@@ -91,13 +91,13 @@ float GCS_Control::get_yaw_rate(){
     return _yaw_rate;
 }
 
-void GCS_Control::set_throttle(int16_t thr){
-    if(thr > 0 && thr < 1000){
+void GCS_Control::set_throttle(float thr){
+    if(thr >= 0.0f && thr <= 1.0f){
         _throttle = thr;
     }
 }
 
-void GCS_Control::set_throttle_trim(int16_t trim){
+void GCS_Control::set_throttle_trim(float trim){
     if(trim > -1*GCS_THROTTLE_TRIM_THRESHOLD && trim < GCS_THROTTLE_TRIM_THRESHOLD){
         _throttle_trim = trim;
     }
@@ -107,16 +107,20 @@ void GCS_Control::set_throttle_mode(int8_t mode){
     if(mode == GCS_THROTTLE_MODE_TRIM || mode == GCS_THROTTLE_MODE_ABSOLUTE){
         _throttle_mode = mode;
     } else {
-        _throttle_mode = 0;
-        _throttle_trim = -50;
+        _throttle_mode = GCS_THROTTLE_MODE_TRIM;
+        _throttle_trim = 0.0f;
     }
 }
 
-int16_t GCS_Control::get_throttle(){
-    return _throttle;
+float GCS_Control::get_throttle(){
+    if(_throttle_mode == GCS_THROTTLE_MODE_TRIM){
+        return _throttle + _throttle_trim;
+    } else {
+        return _throttle;
+    }
 }
 
-int16_t GCS_Control::get_throttle_trim(){
+float GCS_Control::get_throttle_trim(){
     return _throttle_trim;
 }
 
