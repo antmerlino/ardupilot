@@ -1691,9 +1691,9 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
 
         case MAV_CMD_GCS_CONTROL_THROTTLE: {
             if(packet.param2 == GCS_THROTTLE_MODE_TRIM){
-                copter.gcs_control.set_throttle_trim((int16_t)packet.param1);
+                copter.gcs_control.set_throttle_trim(packet.param1);
             }else {
-                copter.gcs_control.set_throttle((int16_t)packet.param1);
+                copter.gcs_control.set_throttle(packet.param1);
             }
 
             copter.gcs_control.set_throttle_mode((int8_t)packet.param2);

@@ -17,11 +17,11 @@ bool Copter::stabilize_np_init(bool ignore_checks)
 
     gcs_control.set_attitude(0, 0, 0);
 
-    gcs_control.set_throttle((int16_t)motors.get_throttle_hover());
+    gcs_control.set_throttle(motors.get_throttle_hover());
 
     gcs_control.set_throttle_mode(GCS_THROTTLE_MODE_TRIM);
 
-    gcs_control.set_throttle_trim(0);
+    gcs_control.set_throttle_trim(0.0f);
 
     // stabilize should never be made to fail
     return true;
@@ -36,7 +36,7 @@ void Copter::stabilize_np_run()
     int16_t throttle;
 
     // if not armed set throttle to zero and exit immediately
-    if (!motors.armed() || ap.throttle_zero || !motors.get_interlock()) {
+    if (!motors.armed() || !motors.get_interlock()) {
         motors.set_desired_spool_state(AP_Motors::DESIRED_SPIN_WHEN_ARMED);
         attitude_control.set_throttle_out_unstabilized(0,true,g.throttle_filt);
         return;
@@ -57,12 +57,6 @@ void Copter::stabilize_np_run()
     // call attitude controller
     attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(target_roll, target_pitch, target_yaw_rate, get_smoothing_gain());
 
-    if(gcs_control.get_throttle_mode() == GCS_THROTTLE_MODE_TRIM){
-        throttle = (int16_t)gcs_control.get_throttle() + gcs_control.get_throttle_trim();
-    } else {
-        throttle = gcs_control.get_throttle();
-    }
-
     // output pilot's throttle
-    attitude_control.set_throttle_out(throttle, true, g.throttle_filt);
+    attitude_control.set_throttle_out(gcs_control.get_throttle(), true, g.throttle_filt);
 }
