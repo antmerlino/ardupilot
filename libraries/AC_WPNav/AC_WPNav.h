@@ -109,6 +109,9 @@ public:
     /// set_speed_xy - allows main code to pass target horizontal velocity for wp navigation
     void set_speed_xy(float speed_cms);
 
+    /// set_speed - allows main code to pass target velocity for wp navigation (xyz)
+    void set_speed(float speed_cms);
+
     /// get_speed_xy - allows main code to retrieve target horizontal velocity for wp navigation
     float get_speed_xy() const { return _wp_speed_cms; }
 

@@ -982,7 +982,7 @@ bool Copter::do_guided(const AP_Mission::Mission_Command& cmd)
 void Copter::do_change_speed(const AP_Mission::Mission_Command& cmd)
 {
     if (cmd.content.speed.target_ms > 0) {
-        wp_nav.set_speed_xy(cmd.content.speed.target_ms * 100.0f);
+        wp_nav.set_speed(cmd.content.speed.target_ms * 100.0f);
     }
 }
 
