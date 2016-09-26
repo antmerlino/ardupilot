@@ -560,6 +560,8 @@ void Copter::guided_pos_control_run() {
 }
 
 void Copter::guided_alt_control_run() {
+    float target_roll, target_pitch, target_yaw_rate;
+
     // if not auto armed or motors not enabled set throttle to zero and exit immediately
     if (!motors.armed() || !ap.auto_armed || !motors.get_interlock() || (ap.land_complete & !posvel_allow_takeoff)) {
         // set target position and velocity to current position and velocity
@@ -581,15 +583,22 @@ void Copter::guided_alt_control_run() {
     // set motors to full range
     motors.set_desired_spool_state(AP_Motors::DESIRED_THROTTLE_UNLIMITED);
 
-    // calculate dt
-    float dt = pos_control.time_since_last_xy_update();
+    // apply SIMPLE mode transform to pilot inputs
+    update_simple_mode();
+
+    // convert pilot input to lean angles
+    // To-Do: convert get_pilot_desired_lean_angles to return angles as floats
+    get_pilot_desired_lean_angles(channel_roll->get_control_in(), channel_pitch->get_control_in(), target_roll, target_pitch, aparm.angle_max);
+
+    // get pilot's desired yaw rate
+    target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+
+    // call attitude controller
+    attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(target_roll, target_pitch, target_yaw_rate, get_smoothing_gain());
 
     pos_control.set_alt_target(guided_pos_target_cm.z);
 
     pos_control.update_z_controller();
-
-    // call attitude controller
-    attitude_control.input_euler_angle_roll_pitch_euler_rate_yaw(0, 0, 0, get_smoothing_gain());
 }
 
 // guided_vel_control_run - runs the guided velocity controller

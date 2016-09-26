@@ -130,6 +130,15 @@ bool Copter::set_mode(control_mode_t mode, mode_reason_t reason)
         control_mode_reason = reason;
         DataFlash.Log_Write_Mode(control_mode, control_mode_reason);
 
+        /* Try sending a heartbeat when the mode changes
+         *
+         * We do this to maximize the likelihood that the gcs will
+         * see the mode change.  There is still a small chance that a
+         * mode chnage is missed if the mode changes happend back to back
+         * and the message below gets deferred.
+         */
+        gcs_send_heartbeat();
+
         adsb.set_is_auto_mode((mode == AUTO) || (mode == RTL) || (mode == GUIDED));
 
 #if AC_FENCE == ENABLED
