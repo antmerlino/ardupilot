@@ -430,6 +430,20 @@ void AC_WPNav::set_speed_xy(float speed_cms)
     }
 }
 
+void AC_WPNav::set_speed(float speed_cms)
+{
+    // range check new target speed and update position controller
+    if (speed_cms >= WPNAV_WP_SPEED_MIN) {
+        _wp_speed_cms = speed_cms;
+        _wp_speed_down_cms = speed_cms;
+        _wp_speed_up_cms = speed_cms;
+        _pos_control.set_speed_xy(_wp_speed_cms);
+        _pos_control.set_speed_z(-_wp_speed_down_cms, _wp_speed_up_cms);
+        // flag that wp leash must be recalculated
+        _flags.recalc_wp_leash = true;
+    }
+}
+
 /// set_wp_destination waypoint using location class
 ///     returns false if conversion from location to vector from ekf origin cannot be calculated
 bool AC_WPNav::set_wp_destination(const Location_Class& destination)
