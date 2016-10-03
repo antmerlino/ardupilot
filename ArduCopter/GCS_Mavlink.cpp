@@ -990,6 +990,19 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
         break;
     }
 
+    case MAVLINK_MSG_ID_PING:         // MAV ID 4
+    {
+        mavlink_ping_t packet;
+        mavlink_msg_ping_decode(msg, &packet);
+        mavlink_msg_ping_send(
+            chan,
+            copter.gps.time_epoch_usec(),
+            packet.seq,
+            packet.target_system,
+            packet.target_component);
+        break;
+    }
+
     case MAVLINK_MSG_ID_SET_MODE:       // MAV ID: 11
     {
 #ifdef DISALLOW_GCS_MODE_CHANGE_DURING_RC_FAILSAFE
