@@ -1281,10 +1281,14 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
         case MAV_CMD_DO_CHANGE_SPEED:
             // param1 : unused
             // param2 : new speed in m/s
-            // param3 : unused
+            // param3 : 0 = xy, ~0 = xyz
             // param4 : unused
             if (packet.param2 > 0.0f) {
-                copter.wp_nav.set_speed_xy(packet.param2 * 100.0f);
+                if(packet.param3 == 0.0f){
+                    copter.wp_nav.set_speed_xy(packet.param2 * 100.0f);
+                } else {
+                    copter.wp_nav.set_speed(packet.param2 * 100.0f);
+                }
                 result = MAV_RESULT_ACCEPTED;
             } else {
                 result = MAV_RESULT_FAILED;
