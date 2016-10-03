@@ -30,8 +30,16 @@ void Copter::gcs_send_deferred(void)
 NOINLINE void Copter::send_heartbeat(mavlink_channel_t chan)
 {
     uint8_t base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
-    uint8_t system_status = ap.land_complete ? MAV_STATE_STANDBY : MAV_STATE_ACTIVE;
+    uint8_t system_status;
     uint32_t custom_mode = control_mode;
+
+    if(!ap.initialised) {
+        system_status = MAV_STATE_BOOT;
+    } else if (ap.land_complete) {
+        system_status = MAV_STATE_STANDBY;
+    } else {
+        system_status = MAV_STATE_ACTIVE;
+    }
 
     // set system as critical if any failsafe have triggered
     if (failsafe.radio || failsafe.battery || failsafe.gcs || failsafe.ekf || failsafe.terrain || failsafe.adsb)  {
