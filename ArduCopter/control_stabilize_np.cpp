@@ -33,7 +33,6 @@ void Copter::stabilize_np_run()
 {
     float target_roll, target_pitch;
     float target_yaw_rate;
-    int16_t throttle;
 
     // if not armed set throttle to zero and exit immediately
     if (!motors.armed() || !motors.get_interlock()) {
